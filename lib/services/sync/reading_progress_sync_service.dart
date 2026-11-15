@@ -19,9 +19,11 @@ class ReadingProgressSyncConfig {
     required this.token,
     required this.deviceId,
     required this.deviceName,
+    this.booksEnabled = false,
   });
 
   final bool enabled;
+  final bool booksEnabled;
   final String serverUrl;
   final String userId;
   final String token;
@@ -34,8 +36,11 @@ class ReadingProgressSyncConfig {
       userId.trim().isNotEmpty &&
       deviceId.trim().isNotEmpty;
 
+  bool get booksReady => isReady && booksEnabled && serverUrl.trim().isNotEmpty;
+
   ReadingProgressSyncConfig copyWith({
     bool? enabled,
+    bool? booksEnabled,
     String? serverUrl,
     String? userId,
     String? token,
@@ -44,6 +49,7 @@ class ReadingProgressSyncConfig {
   }) {
     return ReadingProgressSyncConfig(
       enabled: enabled ?? this.enabled,
+      booksEnabled: booksEnabled ?? this.booksEnabled,
       serverUrl: serverUrl ?? this.serverUrl,
       userId: userId ?? this.userId,
       token: token ?? this.token,
@@ -175,6 +181,8 @@ class ReadingProgressSyncService {
       ReadingProgressSyncService();
 
   static const String enabledPreferenceKey = 'reading_progress_sync_enabled_v1';
+  static const String booksEnabledPreferenceKey =
+      'reading_progress_sync_books_enabled_v1';
   static const String serverUrlPreferenceKey =
       'reading_progress_sync_server_url_v1';
   static const String userIdPreferenceKey = 'reading_progress_sync_user_id_v1';
@@ -207,6 +215,7 @@ class ReadingProgressSyncService {
     }
     return ReadingProgressSyncConfig(
       enabled: prefs.getBool(enabledPreferenceKey) ?? false,
+      booksEnabled: prefs.getBool(booksEnabledPreferenceKey) ?? false,
       serverUrl: prefs.getString(serverUrlPreferenceKey) ?? '',
       userId: prefs.getString(userIdPreferenceKey) ?? '',
       token: prefs.getString(tokenPreferenceKey) ?? '',
@@ -222,6 +231,7 @@ class ReadingProgressSyncService {
     required String userId,
     required String token,
     required String deviceName,
+    bool? booksEnabled,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final previous = await loadConfig();
@@ -231,6 +241,10 @@ class ReadingProgressSyncService {
         previous.serverUrl != normalizedUrl ||
         previous.userId != normalizedUserId;
     await prefs.setBool(enabledPreferenceKey, enabled);
+    await prefs.setBool(
+      booksEnabledPreferenceKey,
+      enabled && (booksEnabled ?? previous.booksEnabled),
+    );
     await prefs.setString(serverUrlPreferenceKey, normalizedUrl);
     await prefs.setString(userIdPreferenceKey, normalizedUserId);
     await prefs.setString(tokenPreferenceKey, token.trim());

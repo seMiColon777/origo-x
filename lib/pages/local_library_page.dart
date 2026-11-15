@@ -13,6 +13,7 @@ import '../services/books/book_import_service.dart';
 import '../services/core/theme_notifier.dart';
 import '../services/reading/reading_stats_dao.dart';
 import '../services/sync/reading_progress_sync_service.dart';
+import '../widgets/cloud_books_dialog.dart';
 import 'reader/native/native_reader_page.dart';
 
 class LocalLibraryPage extends StatefulWidget {
@@ -174,6 +175,7 @@ class _LocalLibraryPageState extends State<LocalLibraryPage> {
     try {
       final saved = await service.saveConfig(
         enabled: updated.enabled,
+        booksEnabled: updated.booksEnabled,
         serverUrl: updated.serverUrl,
         userId: updated.userId,
         token: updated.token,
@@ -192,6 +194,34 @@ class _LocalLibraryPageState extends State<LocalLibraryPage> {
     } finally {
       if (mounted) setState(() => _syncBusy = false);
     }
+  }
+
+  Future<void> _showCloudBooks() async {
+    final service = ReadingProgressSyncService.instance;
+    var config = await service.loadConfig();
+    if (!mounted) return;
+    if (!config.enabled || !config.isReady) {
+      _message(_text('请先配置服务端同步', 'Configure server sync first'));
+      await _showSyncSettings();
+      return;
+    }
+    if (!config.booksEnabled) {
+      _message(
+        _text(
+          '请先在同步设置中开启“同步书籍文件”',
+          'Enable "Sync book files" in the sync settings first',
+        ),
+      );
+      await _showSyncSettings();
+      config = await service.loadConfig();
+      if (!mounted || !config.booksEnabled) return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (_) =>
+          CloudBooksDialog(config: config, onLibraryChanged: _reload),
+    );
+    _reload();
   }
 
   Future<void> _remove(Book book) async {
@@ -228,7 +258,12 @@ class _LocalLibraryPageState extends State<LocalLibraryPage> {
       title: Text(_text('本地书库', 'Local library')),
       actions: [
         IconButton(
-          tooltip: _text('服务端进度同步', 'Server progress sync'),
+          tooltip: _text('云端书架', 'Cloud shelf'),
+          onPressed: _showCloudBooks,
+          icon: const Icon(Icons.cloud_outlined),
+        ),
+        IconButton(
+          tooltip: _text('服务端同步设置', 'Server sync settings'),
           onPressed: _syncBusy ? null : _showSyncSettings,
           icon: _syncBusy
               ? const SizedBox(
@@ -374,6 +409,7 @@ class _SyncSettingsDialogState extends State<_SyncSettingsDialog> {
   late final TextEditingController _tokenController;
   late final TextEditingController _deviceController;
   late bool _enabled;
+  late bool _booksEnabled;
   bool _testing = false;
   bool _testSucceeded = false;
   String? _testMessage;
@@ -382,6 +418,7 @@ class _SyncSettingsDialogState extends State<_SyncSettingsDialog> {
   void initState() {
     super.initState();
     _enabled = widget.initialConfig.enabled;
+    _booksEnabled = widget.initialConfig.booksEnabled;
     _serverController = TextEditingController(
       text: widget.initialConfig.serverUrl,
     );
@@ -409,6 +446,7 @@ class _SyncSettingsDialogState extends State<_SyncSettingsDialog> {
   ReadingProgressSyncConfig _currentConfig() {
     return widget.initialConfig.copyWith(
       enabled: _enabled,
+      booksEnabled: _enabled && _booksEnabled,
       serverUrl: _serverController.text.trim(),
       userId: _userIdController.text.trim(),
       token: _tokenController.text.trim(),
@@ -452,7 +490,7 @@ class _SyncSettingsDialogState extends State<_SyncSettingsDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return AlertDialog(
-      title: Text(_text('服务端进度同步', 'Server progress sync')),
+      title: Text(_text('服务端同步', 'Server sync')),
       content: SizedBox(
         width: 460,
         child: SingleChildScrollView(
@@ -463,12 +501,32 @@ class _SyncSettingsDialogState extends State<_SyncSettingsDialog> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: _enabled,
-                onChanged: (value) => setState(() => _enabled = value),
+                onChanged: (value) => setState(() {
+                  _enabled = value;
+                  if (!value) _booksEnabled = false;
+                }),
                 title: Text(_text('启用服务端同步', 'Enable server sync')),
                 subtitle: Text(
                   _text(
                     '在多台设备之间同步阅读位置',
                     'Keep reading positions in sync across devices',
+                  ),
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _enabled && _booksEnabled,
+                onChanged: _enabled
+                    ? (value) => setState(() => _booksEnabled = value)
+                    : null,
+                title: Text(_text('同步书籍文件', 'Sync book files')),
+                subtitle: Text(
+                  _text(
+                    '把 TXT/EPUB 上传到你自己的服务器，其他设备可直接下载。'
+                        '关闭时只同步阅读位置。',
+                    'Upload TXT/EPUB files to your own server so other '
+                        'devices can download them. When off, only reading '
+                        'positions are exchanged.',
                   ),
                 ),
               ),
@@ -521,9 +579,12 @@ class _SyncSettingsDialogState extends State<_SyncSettingsDialog> {
               const SizedBox(height: 12),
               Text(
                 _text(
-                  '同步只交换阅读位置，不上传书籍文件、笔记或阅读统计。',
-                  'Only reading positions are exchanged. Book files, notes '
-                      'and statistics stay on this device.',
+                  '默认只交换阅读位置。开启“同步书籍文件”后，书籍本体才会'
+                      '上传到你的服务器；笔记和阅读统计始终留在本机。',
+                  'Only reading positions are exchanged by default. Book '
+                      'files are uploaded to your own server after you enable '
+                      '"Sync book files"; notes and statistics stay on this '
+                      'device.',
                 ),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,

@@ -27,9 +27,12 @@ FORBIDDEN_DEPENDENCIES = (
 # module is the sole place allowed to use an HTTP client.
 REVIEWED_SYNC_FILES = frozenset({
     'lib/models/reading_progress_sync.dart',
+    'lib/services/sync/cloud_book_service.dart',
     'lib/services/sync/reading_progress_sync_service.dart',
     'sync_server/README.md',
+    'sync_server/bin/book_store.dart',
     'sync_server/bin/server.dart',
+    'test/cloud_book_sync_test.dart',
     'test/reading_progress_sync_test.dart',
 })
 # Only report path and finding type, never matched values.

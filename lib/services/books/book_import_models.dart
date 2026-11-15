@@ -6,7 +6,8 @@ import 'dart:typed_data';
 import 'package:xxread/models/book.dart';
 
 enum BookImportSourceKind {
-  filePicker('file_picker');
+  filePicker('file_picker'),
+  serverDownload('server_download');
 
   const BookImportSourceKind(this.storageValue);
 
