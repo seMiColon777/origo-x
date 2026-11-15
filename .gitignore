@@ -47,3 +47,6 @@ app.*.map.json
 # Local tooling and localization diagnostics
 .vscode/
 l10n_untranslated.json
+
+# Self-hosted sync server runtime data
+/sync_server/data/

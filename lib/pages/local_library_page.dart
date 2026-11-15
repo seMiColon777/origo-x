@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -11,6 +12,7 @@ import '../services/books/book_import_models.dart';
 import '../services/books/book_import_service.dart';
 import '../services/core/theme_notifier.dart';
 import '../services/reading/reading_stats_dao.dart';
+import '../services/sync/reading_progress_sync_service.dart';
 import 'reader/native/native_reader_page.dart';
 
 class LocalLibraryPage extends StatefulWidget {
@@ -33,16 +35,31 @@ class _LocalLibraryPageState extends State<LocalLibraryPage> {
   final _booksDao = BookDao();
   late Future<List<Book>> _books;
   bool _importing = false;
+  bool _syncBusy = false;
   String _query = '';
 
   @override
   void initState() {
     super.initState();
     _books = _loadBooks();
+    // A custom loader is the testable/library-embedding path. Only the real
+    // app startup touches the configured sync server.
+    if (widget.booksLoader == null) {
+      unawaited(_syncOnLaunch());
+    }
   }
 
   Future<List<Book>> _loadBooks() =>
       (widget.booksLoader ?? _booksDao.getAllBooks)();
+
+  Future<void> _syncOnLaunch() async {
+    try {
+      final result = await ReadingProgressSyncService.instance.syncNow();
+      if (mounted && result.pulled > 0) _reload();
+    } catch (error) {
+      debugPrint('reading progress sync on launch failed: $error');
+    }
+  }
 
   void _reload() {
     if (mounted) {
@@ -143,6 +160,40 @@ class _LocalLibraryPageState extends State<LocalLibraryPage> {
     }
   }
 
+  Future<void> _showSyncSettings() async {
+    if (_syncBusy) return;
+    final service = ReadingProgressSyncService.instance;
+    final config = await service.loadConfig();
+    if (!mounted) return;
+    final updated = await showDialog<ReadingProgressSyncConfig>(
+      context: context,
+      builder: (_) =>
+          _SyncSettingsDialog(initialConfig: config, service: service),
+    );
+    if (updated == null || !mounted) return;
+    try {
+      final saved = await service.saveConfig(
+        enabled: updated.enabled,
+        serverUrl: updated.serverUrl,
+        userId: updated.userId,
+        token: updated.token,
+        deviceName: updated.deviceName,
+      );
+      if (!saved.enabled) {
+        _message(_text('已关闭服务端同步', 'Server sync disabled'));
+        return;
+      }
+      setState(() => _syncBusy = true);
+      final result = await service.syncNow();
+      _message(result.describe(chinese: _chinese));
+      if (result.pulled > 0) _reload();
+    } catch (error) {
+      _message(_text('同步失败：$error', 'Sync failed: $error'));
+    } finally {
+      if (mounted) setState(() => _syncBusy = false);
+    }
+  }
+
   Future<void> _remove(Book book) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -176,6 +227,17 @@ class _LocalLibraryPageState extends State<LocalLibraryPage> {
     appBar: AppBar(
       title: Text(_text('本地书库', 'Local library')),
       actions: [
+        IconButton(
+          tooltip: _text('服务端进度同步', 'Server progress sync'),
+          onPressed: _syncBusy ? null : _showSyncSettings,
+          icon: _syncBusy
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.cloud_sync_outlined),
+        ),
         IconButton(
           tooltip: _text('阅读统计', 'Reading statistics'),
           onPressed: _showStats,
@@ -291,4 +353,215 @@ class _LocalLibraryPageState extends State<LocalLibraryPage> {
       ],
     ),
   );
+}
+
+class _SyncSettingsDialog extends StatefulWidget {
+  const _SyncSettingsDialog({
+    required this.initialConfig,
+    required this.service,
+  });
+
+  final ReadingProgressSyncConfig initialConfig;
+  final ReadingProgressSyncService service;
+
+  @override
+  State<_SyncSettingsDialog> createState() => _SyncSettingsDialogState();
+}
+
+class _SyncSettingsDialogState extends State<_SyncSettingsDialog> {
+  late final TextEditingController _serverController;
+  late final TextEditingController _userIdController;
+  late final TextEditingController _tokenController;
+  late final TextEditingController _deviceController;
+  late bool _enabled;
+  bool _testing = false;
+  bool _testSucceeded = false;
+  String? _testMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = widget.initialConfig.enabled;
+    _serverController = TextEditingController(
+      text: widget.initialConfig.serverUrl,
+    );
+    _userIdController = TextEditingController(
+      text: widget.initialConfig.userId,
+    );
+    _tokenController = TextEditingController(text: widget.initialConfig.token);
+    _deviceController = TextEditingController(
+      text: widget.initialConfig.deviceName,
+    );
+  }
+
+  @override
+  void dispose() {
+    _serverController.dispose();
+    _userIdController.dispose();
+    _tokenController.dispose();
+    _deviceController.dispose();
+    super.dispose();
+  }
+
+  bool get _chinese => Localizations.localeOf(context).languageCode == 'zh';
+  String _text(String chinese, String english) => _chinese ? chinese : english;
+
+  ReadingProgressSyncConfig _currentConfig() {
+    return widget.initialConfig.copyWith(
+      enabled: _enabled,
+      serverUrl: _serverController.text.trim(),
+      userId: _userIdController.text.trim(),
+      token: _tokenController.text.trim(),
+      deviceName: _deviceController.text.trim(),
+    );
+  }
+
+  Future<void> _testConnection() async {
+    setState(() {
+      _testing = true;
+      _testMessage = null;
+    });
+    final error = await widget.service.testConnection(_currentConfig());
+    if (!mounted) return;
+    setState(() {
+      _testing = false;
+      _testSucceeded = error == null;
+      _testMessage = error == null
+          ? _text('服务器连接正常', 'Server reachable')
+          : _text('连接失败：$error', 'Connection failed: $error');
+    });
+  }
+
+  void _save() {
+    final url = _serverController.text.trim();
+    final userId = _userIdController.text.trim();
+    if (_enabled && (url.isEmpty || userId.isEmpty)) {
+      setState(() {
+        _testSucceeded = false;
+        _testMessage = _text(
+          '启用同步时必须填写服务器地址和用户 ID',
+          'A server URL and user ID are required when sync is enabled',
+        );
+      });
+      return;
+    }
+    Navigator.pop(context, _currentConfig());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text(_text('服务端进度同步', 'Server progress sync')),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _enabled,
+                onChanged: (value) => setState(() => _enabled = value),
+                title: Text(_text('启用服务端同步', 'Enable server sync')),
+                subtitle: Text(
+                  _text(
+                    '在多台设备之间同步阅读位置',
+                    'Keep reading positions in sync across devices',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _serverController,
+                enabled: _enabled,
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                decoration: InputDecoration(
+                  labelText: _text('服务器地址', 'Server URL'),
+                  hintText: 'http://192.168.1.10:8787',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _userIdController,
+                enabled: _enabled,
+                autocorrect: false,
+                decoration: InputDecoration(
+                  labelText: _text('用户 ID', 'User ID'),
+                  helperText: _text(
+                    '同一个用户 ID 的设备共享阅读进度',
+                    'Devices with the same user ID share progress',
+                  ),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _tokenController,
+                enabled: _enabled,
+                obscureText: true,
+                autocorrect: false,
+                decoration: InputDecoration(
+                  labelText: _text('访问令牌（可选）', 'Access token (optional)'),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _deviceController,
+                enabled: _enabled,
+                decoration: InputDecoration(
+                  labelText: _text('设备名称', 'Device name'),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _text(
+                  '同步只交换阅读位置，不上传书籍文件、笔记或阅读统计。',
+                  'Only reading positions are exchanged. Book files, notes '
+                      'and statistics stay on this device.',
+                ),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              if (_testMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _testMessage!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: _testSucceeded
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.error,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _enabled && !_testing ? _testConnection : null,
+          child: Text(
+            _testing
+                ? _text('测试中…', 'Testing…')
+                : _text('测试连接', 'Test connection'),
+          ),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(_text('取消', 'Cancel')),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: Text(_text('保存并同步', 'Save and sync')),
+        ),
+      ],
+    );
+  }
 }

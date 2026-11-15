@@ -4,7 +4,9 @@ The public source edition implements local TXT/EPUB reading. Its entry point ini
 
 Excluded implementation families: account/authentication, purchases and entitlement validation, source discovery/protocol/scripting engines, AI requests, cloud TTS, remote/cloud/WebDAV synchronization, production API clients, deployment tooling, signing credentials, internal marketing/review material and personal donation assets.
 
-The allowed source files are recorded in `public_source_manifest.json`. `tool/check_public_source.py` checks the tracked tree against that manifest and disallows excluded source imports, dependency packages, operational endpoints, local home paths and credentials. Keep the manifest and checks in sync when extending the local reader; do not copy entire development trees.
+The reviewed exception is an opt-in, self-hosted reading-position sync module (`sync_server/` and `lib/services/sync/`). It is disabled by default, stores only reading positions, has no account service or operator-hosted endpoint, and is the only code family allowed to use an HTTP client. The server keeps data in a local JSON file and is intended to run on a user-controlled machine or LAN.
+
+The allowed source files are recorded in `public_source_manifest.json`. `tool/check_public_source.py` checks the tracked tree against that manifest and disallows excluded source imports, dependency packages, operational endpoints, local home paths and credentials. The sync module paths are listed in `REVIEWED_SYNC_FILES` in the checker; keep that allowlist, the manifest and the checks in sync when extending the local reader. Do not copy entire development trees.
 
 Existing license attribution is preserved. No account secrets, maintainer email/contact data, signing team or provisioning material belongs in this edition.
 

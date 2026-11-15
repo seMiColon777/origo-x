@@ -2,11 +2,11 @@
 
 [中文说明](README.zh-CN.md)
 
-This repository contains a buildable, local-only reader source edition. It reuses the current TXT/EPUB pagination, typography, bookmark, note and system text-to-speech components.
+This repository contains a buildable, local-first reader source edition. It reuses the current TXT/EPUB pagination, typography, bookmark, note and system text-to-speech components.
 
-Included: local book import and library, page-turn modes, text search, reading themes and font settings, bookmarks and notes, local reading statistics, and operating-system TTS.
+Included: local book import and library, page-turn modes, text search, reading themes and font settings, bookmarks and notes, local reading statistics, operating-system TTS, and an optional self-hosted reading-position sync server.
 
-The source edition does not include account services, payments, advanced source engines, AI, cloud synchronization or developer-operated backend clients. These implementations are absent from the source tree and dependencies, rather than hidden with UI switches.
+The source edition does not include account services, payments, advanced source engines, AI, cloud synchronization or developer-operated backend clients. These implementations are absent from the source tree and dependencies, rather than hidden with UI switches. The bundled sync module is opt-in and self-hosted; it exchanges only reading positions and is the single reviewed exception in `tool/check_public_source.py`.
 
 ## Run from source
 
@@ -19,6 +19,10 @@ flutter run
 ```
 
 The generated platform projects use a neutral example application ID and contain no maintainer signing identities. Local builds use your own platform signing setup where required. Android and desktop builds are checked by the public workflow.
+
+## Optional progress sync
+
+The app ships with an opt-in sync client, and `sync_server/` contains a dependency-free self-hosted server for reading positions. Start it with `dart run sync_server/bin/server.dart`, then open the library in the app, tap the cloud-sync icon and enter the server URL plus a shared user ID. See [sync_server/README.md](sync_server/README.md) for environment variables and API details. The server never receives book files, notes or reading statistics. Use HTTPS when the server is reachable beyond your local network.
 
 ## Official downloads
 

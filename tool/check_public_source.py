@@ -22,6 +22,16 @@ FORBIDDEN_DEPENDENCIES = (
     'passkeys', 'sign_in_with_apple', 'google_sign_in', 'flutter_web_auth_2',
     'audioplayers', 'pdfx', 'kindle_unpack', 'pointycastle',
 )
+# The opt-in self-hosted reading-progress sync module is the single reviewed
+# exception to the local-only file families. It exchanges positions only; the
+# module is the sole place allowed to use an HTTP client.
+REVIEWED_SYNC_FILES = frozenset({
+    'lib/models/reading_progress_sync.dart',
+    'lib/services/sync/reading_progress_sync_service.dart',
+    'sync_server/README.md',
+    'sync_server/bin/server.dart',
+    'test/reading_progress_sync_test.dart',
+})
 # Only report path and finding type, never matched values.
 CONTENT_CHECKS = {
     'private home path': re.compile(r'(?:/Users/|/home/)[A-Za-z0-9_.-]+/|[A-Za-z]:\\Users\\'),
@@ -33,7 +43,7 @@ CONTENT_CHECKS = {
 }
 DART_CHECKS = {
     'excluded implementation reference': re.compile(
-        r'HttpClient|WebSocket|package:http/|package:dio/|book_sources/|services/(?:account|ai|sync|backup|export)/|reader_core/ai/'
+        r'HttpClient|WebSocket|package:http/|package:dio/|book_sources/|services/(?:account|ai|backup|export)/|reader_core/ai/'
         r'|MemberAccountController|ReadingCloud|WebDav|ReaderAi|AIChat|AiService'
         r'|StorePurchaseService|OfflineReaderLicense|PremiumMembership|CloudTts|ORSP'
     ),
@@ -59,7 +69,10 @@ def check(paths: list[str], manifest: dict) -> list[str]:
         if path.is_symlink() or not path.is_file():
             findings.append(f'{name}: symlink or missing file')
             continue
-        if any(name.startswith(prefix) for prefix in FORBIDDEN_PATHS):
+        if (
+            any(name.startswith(prefix) for prefix in FORBIDDEN_PATHS)
+            and name not in REVIEWED_SYNC_FILES
+        ):
             findings.append(f'{name}: excluded implementation family')
         if Path(name).name.startswith('.env'):
             findings.append(f'{name}: private environment configuration')
@@ -85,7 +98,7 @@ def check(paths: list[str], manifest: dict) -> list[str]:
             for identifier in identifiers:
                 if identifier not in {'org.example.xxread', 'org.example.xxread.RunnerTests'}:
                     findings.append(f'{name}: non-neutral application identity')
-        if path.suffix == '.dart':
+        if path.suffix == '.dart' and name not in REVIEWED_SYNC_FILES:
             for label, pattern in DART_CHECKS.items():
                 if pattern.search(content):
                     findings.append(f'{name}: {label}')

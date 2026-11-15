@@ -307,8 +307,8 @@ extension _NativeReaderControls on _NativeReaderPageState {
         chapterIndex: chapterIndex,
       ),
     );
-    await _queuePositionWrite(
-      () => BookDao().updateBookCanonicalLocator(
+    await _queuePositionWrite(() async {
+      await BookDao().updateBookCanonicalLocator(
         bookId,
         canonicalLocator,
         null,
@@ -320,8 +320,11 @@ extension _NativeReaderControls on _NativeReaderPageState {
                     ? 1.0
                     : offset / chapter.plainText.length)) /
             _loadedChapters.length,
-      ),
-    );
+      );
+      await ReadingProgressSyncService.instance.noteLocalProgressSaved(
+        widget.book,
+      );
+    });
   }
 
   Future<void> _showReaderAloudPlayer() async {

@@ -60,6 +60,7 @@ import 'package:xxread/services/books/web_book_file_store.dart';
 import 'package:xxread/services/core/app_settings_service.dart';
 import 'package:xxread/services/reading/reading_resume_service.dart';
 import 'package:xxread/services/reading/reading_stats_dao.dart';
+import 'package:xxread/services/sync/reading_progress_sync_service.dart';
 import 'package:xxread/services/tts_service.dart';
 import 'package:xxread/services/reader_aloud_service.dart';
 import 'package:xxread/services/reader_aloud_session.dart';
@@ -802,25 +803,31 @@ class _NativeReaderPageState extends State<NativeReaderPage>
         chapterIndex: chapterIndex,
       ),
     );
-    return _queuePositionWrite(
-      () => BookDao().updateBookCanonicalLocator(
+    return _queuePositionWrite(() async {
+      await BookDao().updateBookCanonicalLocator(
         bookId,
         canonicalLocator,
         null,
         layoutSignature,
         chapterIndex,
         readingProgress: readingProgress,
-      ),
-    );
+      );
+      await ReadingProgressSyncService.instance.noteLocalProgressSaved(
+        widget.book,
+      );
+    });
   }
 
   Future<void> _queueBookProgress(int bookId, int chapterIndex) {
     // The exit snapshot updates both the canonical locator and chapter index;
     // a late chapter-only callback must not overwrite that snapshot.
     if (_exitInProgress) return Future<void>.value();
-    return _queuePositionWrite(
-      () => BookDao().updateBookProgress(bookId, chapterIndex),
-    );
+    return _queuePositionWrite(() async {
+      await BookDao().updateBookProgress(bookId, chapterIndex);
+      await ReadingProgressSyncService.instance.noteLocalProgressSaved(
+        widget.book,
+      );
+    });
   }
 
   void _markReadingPositionChanged() => _positionChanged = true;
