@@ -39,6 +39,8 @@ machine.
 When `SYNC_USERS` is set, a token only grants access to its own user namespace;
 `alice` cannot read or write `bob`'s data. Keep `SYNC_TOKEN` unset in that mode.
 If neither variable is set, the server accepts any request on the local network.
+User IDs may contain letters, digits, `.`, `_` and `-` (including non-ASCII
+letters such as `书友`); IDs that look like paths are rejected.
 
 Example:
 
@@ -112,13 +114,17 @@ Errors use a stable `error` code such as `unauthorized`, `hash_mismatch`,
 
 Open the local library in the app, tap the cloud-sync icon, enter the server URL,
 a user ID (for example `family`) and the matching token, then save. Enable
-**Sync book files** if this account should keep whole books on the server. Tap
-the cloud-shelf icon to upload local TXT/EPUB files, download missing ones or
-delete cloud copies. Every device that uses the same server URL, user ID and
-token shares positions and, when enabled, book files for books with matching
-content hashes.
+**Cloud book mode** to give the library a server-backed shelf: every time it
+opens it uploads the local TXT/EPUB files and reading positions that are
+missing from the server, lists the books already stored there, and downloads a
+cloud-only book the first time you open it. Every device that uses the same
+server URL, user ID and token shares positions and book files for books with
+matching content hashes. The cloud-shelf icon offers manual upload, download and
+delete, plus a bulk upload action when an earlier transfer failed.
 
 The feature is disabled by default and works entirely offline until enabled.
+Without **Cloud book mode**, only reading positions are exchanged and no book
+file leaves the device.
 
 ## Operations
 

@@ -330,6 +330,18 @@ class BookDao implements BookImportStore {
     }
   }
 
+  /// 记录云端同步计算出的内容哈希，供阅读进度和云端书架共用同一本书标识。
+  Future<void> updateBookContentHash(int bookId, String contentHash) async {
+    final db = await _databaseProvider();
+    final result = await db.update(
+      'books',
+      {'content_hash': contentHash},
+      where: 'id = ?',
+      whereArgs: [bookId],
+    );
+    if (result == 0) throw Exception('书籍不存在');
+  }
+
   /// 通过内容哈希值查找书籍
   ///
   /// 用于检查是否已导入相同内容的书籍

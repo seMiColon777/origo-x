@@ -50,3 +50,5 @@ l10n_untranslated.json
 
 # Self-hosted sync server runtime data
 /sync_server/data/
+# Widget Preview related
+.widget_preview/

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:xxread/models/book.dart';
 import 'package:xxread/services/books/book_dao.dart';
@@ -186,6 +187,212 @@ void main() {
       ),
     );
     expect(await bookDao.getAllBooks(), isEmpty);
+  });
+
+  test('resolves the book key from a stored content hash', () async {
+    final service = CloudBookService(
+      client: MockClient((_) async => throw StateError('no request expected')),
+    );
+    addTearDown(service.dispose);
+
+    final key = await service.resolveBookKey(
+      Book(
+        title: 'Hashed',
+        filePath: p.join(sandbox.path, 'missing.txt'),
+        format: 'txt',
+        contentHash: 'ABCDEF0123456789ABCDEF0123456789',
+      ),
+    );
+
+    expect(key, 'abcdef0123456789abcdef0123456789');
+  });
+
+  test(
+    'cloud library sync uploads missing books and keeps hashes for progress',
+    () async {
+      final sharedBytes = utf8.encode('Already in the cloud.');
+      final sharedHash = md5.convert(sharedBytes).toString();
+      final newBytes = utf8.encode('Upload this local book.');
+      final newHash = md5.convert(newBytes).toString();
+      final legacyBytes = utf8.encode('Legacy book without a hash.');
+      final legacyHash = md5.convert(legacyBytes).toString();
+
+      final sharedFile = File(p.join(sandbox.path, 'shared.txt'));
+      await sharedFile.writeAsBytes(sharedBytes);
+      final newFile = File(p.join(sandbox.path, 'new.txt'));
+      await newFile.writeAsBytes(newBytes);
+      final legacyFile = File(p.join(sandbox.path, 'legacy.txt'));
+      await legacyFile.writeAsBytes(legacyBytes);
+
+      await bookDao.insertBook(
+        Book(
+          title: 'Shared',
+          author: 'Author',
+          filePath: sharedFile.path,
+          format: 'TXT',
+          currentPage: 5,
+          totalPages: 10,
+          readingProgress: 0.5,
+          contentHash: sharedHash,
+        ),
+      );
+      await bookDao.insertBook(
+        Book(
+          title: 'New',
+          author: 'Author',
+          filePath: newFile.path,
+          format: 'TXT',
+          currentPage: 2,
+          totalPages: 10,
+          readingProgress: 0.2,
+          contentHash: newHash,
+        ),
+      );
+      final legacyId = await bookDao.insertBook(
+        Book(
+          title: 'Legacy',
+          author: 'Author',
+          filePath: legacyFile.path,
+          format: 'TXT',
+        ),
+      );
+
+      SharedPreferences.setMockInitialValues({
+        ReadingProgressSyncService.enabledPreferenceKey: true,
+        ReadingProgressSyncService.booksEnabledPreferenceKey: true,
+        ReadingProgressSyncService.serverUrlPreferenceKey: 'http://sync.test',
+        ReadingProgressSyncService.userIdPreferenceKey: 'alice',
+        ReadingProgressSyncService.tokenPreferenceKey: 'secret',
+        ReadingProgressSyncService.deviceIdPreferenceKey: 'device-1',
+        ReadingProgressSyncService.deviceNamePreferenceKey: 'Test device',
+      });
+
+      final cloudRecords = <String, Map<String, dynamic>>{
+        sharedHash: _recordJson(sharedHash, 'Shared'),
+      };
+      final uploadedKeys = <String>[];
+      final progressPuts = <String>[];
+      final client = MockClient((request) async {
+        expect(request.headers['Authorization'], 'Bearer secret');
+        final segments = request.url.pathSegments;
+        if (segments.length == 4 && segments[3] == 'books') {
+          return _jsonResponse({
+            'books': cloudRecords.values.toList(),
+            'usageBytes': 1024,
+            'quotaBytes': 10 * 1024 * 1024,
+          });
+        }
+        if (segments.length == 5 && segments[3] == 'books') {
+          final key = segments[4];
+          uploadedKeys.add(key);
+          cloudRecords[key] = _recordJson(
+            key,
+            request.url.queryParameters['title'] ?? 'Uploaded',
+          );
+          return _jsonResponse({'book': cloudRecords[key]}, 201);
+        }
+        if (segments.length == 5 && segments[3] == 'progress') {
+          progressPuts.add(segments[4]);
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          return _jsonResponse({
+            'record': {...body, 'updatedAt': 1000}..remove('baseUpdatedAt'),
+          });
+        }
+        if (segments.length == 4 && segments[3] == 'progress') {
+          return _jsonResponse({'records': [], 'serverTime': 1000});
+        }
+        throw StateError('unexpected ${request.method} ${request.url}');
+      });
+      final books = CloudBookService(client: client);
+      final progress = ReadingProgressSyncService(
+        bookDao: bookDao,
+        client: client,
+        pushDebounce: const Duration(hours: 1),
+      );
+      final sync = CloudLibrarySync(
+        bookDao: bookDao,
+        bookService: books,
+        progressService: progress,
+      );
+      addTearDown(books.dispose);
+      addTearDown(progress.dispose);
+
+      final result = await sync.syncNow();
+
+      expect(result.status, CloudLibrarySyncStatus.success);
+      expect(result.uploaded, 2);
+      expect(result.failed, 0);
+      expect(result.shelf.keys, containsAll([sharedHash, newHash, legacyHash]));
+      expect(uploadedKeys.toSet(), {newHash, legacyHash});
+      expect(progressPuts.toSet(), {'hash:$sharedHash', 'hash:$newHash'});
+      expect((await bookDao.getBookById(legacyId))?.contentHash, legacyHash);
+
+      final second = await sync.syncNow();
+      expect(second.uploaded, 0);
+      expect(second.status, CloudLibrarySyncStatus.success);
+    },
+  );
+
+  test('merges local and cloud books without duplicating legacy rows', () {
+    const hashA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const hashB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    final localA = Book(
+      id: 1,
+      title: 'Matched',
+      author: 'Author',
+      filePath: 'a.txt',
+      format: 'TXT',
+      contentHash: hashA,
+    );
+    final legacy = Book(
+      id: 2,
+      title: 'Legacy match',
+      author: 'Author',
+      filePath: 'legacy.txt',
+      format: 'TXT',
+    );
+    final cloudOnly = CloudBookRecord(
+      bookKey: hashB,
+      title: 'Cloud only',
+      author: 'Author',
+      format: 'txt',
+      sizeBytes: 10,
+      uploadedAt: 50,
+      updatedAt: 50,
+    );
+
+    final entries = mergeCloudShelf(
+      localBooks: [localA, legacy],
+      cloudBooks: [
+        CloudBookRecord(
+          bookKey: hashA,
+          title: 'Matched',
+          author: 'Author',
+          format: 'txt',
+          sizeBytes: 10,
+          uploadedAt: 10,
+          updatedAt: 10,
+        ),
+        CloudBookRecord(
+          bookKey: 'cccccccccccccccccccccccccccccccc',
+          title: 'Legacy match',
+          author: 'Author',
+          format: 'txt',
+          sizeBytes: 10,
+          uploadedAt: 20,
+          updatedAt: 20,
+        ),
+        cloudOnly,
+      ],
+    );
+
+    expect(entries, hasLength(3));
+    expect(entries[0].local, localA);
+    expect(entries[0].cloud?.bookKey, hashA);
+    expect(entries[1].local, legacy);
+    expect(entries[1].cloud?.title, 'Legacy match');
+    expect(entries[2].isCloudOnly, isTrue);
+    expect(entries[2].cloud?.bookKey, hashB);
   });
 }
 

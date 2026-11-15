@@ -87,7 +87,10 @@ class BookStore {
   static final RegExp _bookKeyPattern = RegExp(
     r'^(?:[a-f0-9]{32}|[a-f0-9]{64})$',
   );
-  static final RegExp _userPattern = RegExp(r'^[A-Za-z0-9._-]{1,100}$');
+  static final RegExp _userPattern = RegExp(
+    r'^[\p{L}\p{N}._-]{1,100}$',
+    unicode: true,
+  );
 
   static bool isValidBookKey(String value) => _bookKeyPattern.hasMatch(value);
 

@@ -32,11 +32,13 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
       widget.service ?? CloudBookService.instance;
 
   List<Book> _localBooks = const [];
-  List<CloudBookRecord> _remoteBooks = const [];
+  CloudShelf _shelf = CloudShelf.empty;
   bool _loading = true;
   String? _busyKey;
   double? _progress;
   String? _error;
+
+  List<CloudBookRecord> get _remoteBooks => _shelf.books;
 
   @override
   void initState() {
@@ -54,7 +56,7 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
       .where(
         (book) =>
             (book.contentHash == null || book.contentHash!.isEmpty) ||
-            !_remoteKeys.contains(book.contentHash),
+            !_remoteKeys.contains(book.contentHash!.toLowerCase()),
       )
       .toList(growable: false);
 
@@ -66,16 +68,16 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
     try {
       final results = await Future.wait([
         _bookDao.getAllBooks(),
-        _service.listBooks(widget.config),
+        _service.listShelf(widget.config),
       ]);
       if (!mounted) return;
       setState(() {
         _localBooks = results[0] as List<Book>;
-        _remoteBooks = results[1] as List<CloudBookRecord>;
+        _shelf = results[1] as CloudShelf;
       });
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = _describeError(error));
+      setState(() => _error = describeCloudBookError(error, chinese: _chinese));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -96,6 +98,7 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
           if (mounted) setState(() => _progress = value);
         },
       );
+      await _persistHash(book, result.record.bookKey);
       if (!mounted) return;
       _snack(
         result.created
@@ -104,7 +107,11 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
       );
       await _load();
     } catch (error) {
-      if (mounted) setState(() => _error = _describeError(error));
+      if (mounted) {
+        setState(
+          () => _error = describeCloudBookError(error, chinese: _chinese),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -113,6 +120,68 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
         });
       }
     }
+  }
+
+  Future<void> _uploadAll() async {
+    if (_busyKey != null) return;
+    final candidates = _uploadCandidates
+        .where(_supportsUpload)
+        .toList(growable: false);
+    if (candidates.isEmpty) return;
+    setState(() {
+      _busyKey = 'upload:all';
+      _progress = 0;
+      _error = null;
+    });
+    var uploaded = 0;
+    try {
+      for (var index = 0; index < candidates.length; index++) {
+        final book = candidates[index];
+        final result = await _service.uploadBook(
+          book,
+          widget.config,
+          onProgress: (value) {
+            if (mounted) {
+              setState(() => _progress = (index + value) / candidates.length);
+            }
+          },
+        );
+        await _persistHash(book, result.record.bookKey);
+        uploaded++;
+      }
+      if (!mounted) return;
+      _snack(_text('已上传 $uploaded 本书', 'Uploaded $uploaded books'));
+      await _load();
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _error = describeCloudBookError(error, chinese: _chinese),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busyKey = null;
+          _progress = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _persistHash(Book book, String bookKey) async {
+    final id = book.id;
+    if (id == null) return;
+    if (book.contentHash?.trim().toLowerCase() == bookKey) return;
+    try {
+      await _bookDao.updateBookContentHash(id, bookKey);
+    } catch (_) {
+      // The upload itself succeeded; the next sync retries the hash update.
+    }
+  }
+
+  bool _supportsUpload(Book book) {
+    final format = book.format.trim().toLowerCase();
+    return format == 'txt' || format == 'epub';
   }
 
   Future<void> _download(CloudBookRecord record) async {
@@ -136,7 +205,11 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
       widget.onLibraryChanged();
       await _load();
     } catch (error) {
-      if (mounted) setState(() => _error = _describeError(error));
+      if (mounted) {
+        setState(
+          () => _error = describeCloudBookError(error, chinese: _chinese),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -181,7 +254,11 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
       _snack(_text('已删除《${record.title}》', 'Deleted ${record.title}'));
       await _load();
     } catch (error) {
-      if (mounted) setState(() => _error = _describeError(error));
+      if (mounted) {
+        setState(
+          () => _error = describeCloudBookError(error, chinese: _chinese),
+        );
+      }
     } finally {
       if (mounted) setState(() => _busyKey = null);
     }
@@ -192,47 +269,6 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  String _describeError(Object error) {
-    if (error is CloudBookException) {
-      final status = error.statusCode == null
-          ? ''
-          : ' (HTTP ${error.statusCode})';
-      switch (error.code) {
-        case 'books_disabled':
-          return _text(
-            '请先在同步设置中开启“同步书籍文件”',
-            'Enable "Sync book files" in the sync settings first',
-          );
-        case 'not_configured':
-          return _text('请先填写服务器地址和用户 ID', 'Set a server URL and user ID');
-        case 'unsupported_platform':
-          return _text(
-            'Web 端暂不支持书籍文件同步',
-            'Book file sync is not available in the browser',
-          );
-        case 'missing_file':
-          return _text('本机书籍文件不存在', 'The local book file is missing');
-        case 'empty_book':
-          return _text('书籍文件为空', 'The book file is empty');
-        case 'unsupported_format':
-          return _text('仅支持 TXT 和 EPUB', 'Only TXT and EPUB are supported');
-        case 'hash_mismatch':
-          return _text('文件校验失败，请重试', 'File verification failed, retry');
-        case 'quota_exceeded':
-          return _text('服务器空间不足', 'The server quota is full');
-        case 'unauthorized':
-          return _text('访问令牌不正确', 'The access token is not accepted');
-        case 'book_not_found':
-          return _text('云端没有这本书', 'The cloud book no longer exists');
-        case 'book_too_large':
-          return _text('书籍文件超过服务器限制', 'The book exceeds the server limit');
-        default:
-          return '${error.code}$status';
-      }
-    }
-    return error.toString();
   }
 
   @override
@@ -253,6 +289,33 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
               ),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            if (_shelf.quotaBytes > 0)
+              Text(
+                _text(
+                  '已用 ${_formatBytes(_shelf.usageBytes)} / '
+                      '${_formatBytes(_shelf.quotaBytes)}',
+                  'Used ${_formatBytes(_shelf.usageBytes)} / '
+                      '${_formatBytes(_shelf.quotaBytes)}',
+                ),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _text(
+                  '云端书籍模式会在打开书库时自动上传本机书籍和进度；'
+                      '这里可以手动重试、下载或删除云端副本。',
+                  'Cloud book mode uploads local books and positions when the '
+                      'library opens. Use this dialog to retry, download or '
+                      'delete cloud copies.',
+                ),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
             if (kIsWeb)
@@ -323,6 +386,16 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
           icon: const Icon(Icons.refresh),
           label: Text(_text('刷新', 'Refresh')),
         ),
+        TextButton.icon(
+          onPressed:
+              _loading ||
+                  _busyKey != null ||
+                  _uploadCandidates.where(_supportsUpload).isEmpty
+              ? null
+              : _uploadAll,
+          icon: const Icon(Icons.cloud_upload_outlined),
+          label: Text(_text('全部上传', 'Upload all')),
+        ),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: Text(_text('关闭', 'Close')),
@@ -358,7 +431,9 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
   }
 
   Widget _remoteTile(CloudBookRecord record) {
-    final local = _localBooks.any((book) => book.contentHash == record.bookKey);
+    final local = _localBooks.any(
+      (book) => book.contentHash?.trim().toLowerCase() == record.bookKey,
+    );
     final busy =
         _busyKey == 'download:${record.bookKey}' ||
         _busyKey == 'delete:${record.bookKey}';
@@ -396,9 +471,7 @@ class _CloudBooksDialogState extends State<CloudBooksDialog> {
 
   Widget _localTile(Book book) {
     final busy = _busyKey == 'upload:${book.id ?? book.filePath}';
-    final supported =
-        book.format.toLowerCase() == 'txt' ||
-        book.format.toLowerCase() == 'epub';
+    final supported = _supportsUpload(book);
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,

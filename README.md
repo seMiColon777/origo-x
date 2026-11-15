@@ -6,7 +6,7 @@ This repository contains a buildable, local-first reader source edition. It reus
 
 Included: local book import and library, page-turn modes, text search, reading themes and font settings, bookmarks and notes, local reading statistics, operating-system TTS, and an optional self-hosted sync server for reading positions and cloud book files.
 
-The source edition does not include account services, payments, advanced source engines, AI, cloud synchronization or developer-operated backend clients. These implementations are absent from the source tree and dependencies, rather than hidden with UI switches. The bundled sync module is opt-in and self-hosted; it exchanges reading positions by default and stores TXT/EPUB files only after the user enables book-file sync. It is the single reviewed exception in `tool/check_public_source.py`.
+The source edition does not include account services, payments, advanced source engines, AI, cloud synchronization or developer-operated backend clients. These implementations are absent from the source tree and dependencies, rather than hidden with UI switches. The bundled sync module is opt-in and self-hosted; it exchanges reading positions by default and stores TXT/EPUB files only after the user enables cloud book mode. It is the single reviewed exception in `tool/check_public_source.py`.
 
 ## Run from source
 
@@ -22,7 +22,7 @@ The generated platform projects use a neutral example application ID and contain
 
 ## Optional self-hosted sync
 
-The app ships with an opt-in sync client, and `sync_server/` contains a self-hosted server for reading positions plus an optional cloud shelf for TXT/EPUB files. Start it with `dart run sync_server/bin/server.dart` after `flutter pub get` (the server verifies uploads with the same `crypto` dependency as the app). In the library, tap the cloud-sync icon to set the server URL, user ID and access token; tap the cloud-shelf icon to upload or download whole books. The **Sync book files** switch must be enabled first; otherwise only reading positions are exchanged. Per-user tokens are configured with `SYNC_USERS`, and the server enforces a per-user storage quota. Notes and reading statistics are never uploaded. See [sync_server/README.md](sync_server/README.md) for environment variables, storage layout and API details. Use HTTPS when the server is reachable beyond your local network.
+The app ships with an opt-in sync client, and `sync_server/` contains a self-hosted server for reading positions plus an optional cloud library for TXT/EPUB files. Start it with `dart run sync_server/bin/server.dart` after `flutter pub get` (the server verifies uploads with the same `crypto` dependency as the app). In the library, tap the cloud-sync icon to set the server URL, user ID and access token, then enable **Cloud book mode**. With it on, opening the library uploads every local TXT/EPUB and its reading position, lists the books already on the server, and downloads a cloud-only book the first time you open it. The cloud-shelf icon keeps manual upload, download and delete available. Per-user tokens are configured with `SYNC_USERS`, and the server enforces a per-user storage quota. Notes and reading statistics are never uploaded. See [sync_server/README.md](sync_server/README.md) for environment variables, storage layout and API details. Use HTTPS when the server is reachable beyond your local network.
 
 ## Official downloads
 
